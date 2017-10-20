@@ -31,8 +31,8 @@ DESTINATION = '/insert/destination/here'
 
 
 '''NEW DEFINED'''
-SOURCE = 'videos'
-DESTINATION = 'records'
+SOURCE = '../videos'
+DESTINATION = '../records'
 # FILE_FILTER = '*.mp4'
 NUM_CHANNELS_VIDEO = 3
 WIDTH_VIDEO = 299
@@ -203,18 +203,15 @@ def convert_video_to_numpy(filenames, dense_optical_flow=False):
   data = []
 
   def video_file_to_ndarray(i, filename):
+    image = np.zeros((HEIGHT_VIDEO, WIDTH_VIDEO, num_real_image_channel), dtype=FLAGS.image_color_depth)
+    video = np.zeros((NUM_FRAMES_PER_VIDEO, HEIGHT_VIDEO, WIDTH_VIDEO, NUM_CHANNELS_VIDEO), dtype=np.uint32)
+    imagePrev = None
     assert os.path.isfile(filename), "Couldn't find video file"
     cap = getVideoCapture(filename)
     assert cap is not None, "Couldn't load video capture:" + filename + ". Moving to next video."
 
     # compute meta data of video
     frameCount = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-    NUM_FRAMES_PER_VIDEO = int(frameCount)
-
-
-    image = np.zeros((HEIGHT_VIDEO, WIDTH_VIDEO, num_real_image_channel), dtype=FLAGS.image_color_depth)
-    video = np.zeros((NUM_FRAMES_PER_VIDEO, HEIGHT_VIDEO, WIDTH_VIDEO, NUM_CHANNELS_VIDEO), dtype=np.uint32)
-    imagePrev = None
 
     # returns nan, if fps needed a measurement must be implemented
     # frameRate = cap.get(cv2.cv.CV_CAP_PROP_FPS)

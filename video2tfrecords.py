@@ -31,8 +31,8 @@ DESTINATION = '/insert/destination/here'
 
 
 '''NEW DEFINED'''
-SOURCE = '../videos'
-DESTINATION = '../records'
+SOURCE = 'videos'
+DESTINATION = 'records'
 # FILE_FILTER = '*.mp4'
 NUM_CHANNELS_VIDEO = 3
 WIDTH_VIDEO = 299
@@ -51,6 +51,9 @@ flags.DEFINE_string('source', SOURCE, 'Directory with video files')
 flags.DEFINE_string('output_path', DESTINATION, 'Directory for storing tf records')
 flags.DEFINE_boolean('optical_flow', CALCULATE_OPTICAL_FLOW, 'Indictes whether optical flow shall be computed and added as fourth '
                                            'channel. Defaults to False')
+
+def _float_feature(value): 
+  return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
 
 def _int64_feature(value):
   return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
@@ -98,7 +101,7 @@ def compute_dense_optical_flow(prev_image, current_image):
 
 
 
-def save_video_to_tfrecords(source_path, destination_path, videos_per_file=FLAGS.num_videos, video_filenames=None,
+def save_videos_to_tfrecords(source_path, destination_path, videos_per_file=FLAGS.num_videos, video_filenames=None,
                             dense_optical_flow=False):
   """calls sub-functions convert_video_to_numpy and save_numpy_to_tfrecords in order to directly export tfrecords files
   :param source_path: directory where video videos are stored
@@ -115,12 +118,10 @@ def save_video_to_tfrecords(source_path, destination_path, videos_per_file=FLAGS
     filenames = gfile.Glob(os.path.join(source_path, FILE_FILTER))
   if not filenames:
     raise RuntimeError('No data files found.')
-
   print('Total videos found: ' + str(len(filenames)))
 
   filenames_split = list(get_chunks(filenames, videos_per_file))
-
-
+  print(filenames_split)
 
   for i, batch in enumerate(filenames_split):
     data = convert_video_to_numpy(batch, dense_optical_flow=dense_optical_flow)
@@ -185,15 +186,15 @@ def convert_video_to_numpy(filenames, dense_optical_flow=False):
   :return if no optical flow is used: ndarray(uint32) of shape (v,i,h,w,c) with v=number of videos, i=number of images,
   (h,w)=height and width of image, c=channel, if optical flow is used: ndarray(uint32) of (v,i,h,w,
   c+1)"""
-  global NUM_CHANNELS_VIDEO
+  
+  # global NUM_CHANNELS_VIDEO
   if not filenames:
     raise RuntimeError('No data files found.')
-
   number_of_videos = len(filenames)
 
   if dense_optical_flow:
     # need an additional channel for the optical flow with one exception:
-    global NUM_CHANNELS_VIDEO
+    # global NUM_CHANNELS_VIDEO
     NUM_CHANNELS_VIDEO = 4
     num_real_image_channel = 3
   else:
@@ -203,19 +204,22 @@ def convert_video_to_numpy(filenames, dense_optical_flow=False):
   data = []
 
   def video_file_to_ndarray(i, filename):
-    image = np.zeros((HEIGHT_VIDEO, WIDTH_VIDEO, num_real_image_channel), dtype=FLAGS.image_color_depth)
-    video = np.zeros((NUM_FRAMES_PER_VIDEO, HEIGHT_VIDEO, WIDTH_VIDEO, NUM_CHANNELS_VIDEO), dtype=np.uint32)
-    imagePrev = None
     assert os.path.isfile(filename), "Couldn't find video file"
     cap = getVideoCapture(filename)
     assert cap is not None, "Couldn't load video capture:" + filename + ". Moving to next video."
 
     # compute meta data of video
     frameCount = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+    NUM_FRAMES_PER_VIDEO = int(frameCount)
+
+    image = np.zeros((HEIGHT_VIDEO, WIDTH_VIDEO, num_real_image_channel), dtype=FLAGS.image_color_depth)
+    video = np.zeros((NUM_FRAMES_PER_VIDEO, HEIGHT_VIDEO, WIDTH_VIDEO, NUM_CHANNELS_VIDEO), dtype=np.uint32)
+    imagePrev = None
 
     # returns nan, if fps needed a measurement must be implemented
     # frameRate = cap.get(cv2.cv.CV_CAP_PROP_FPS)
-    steps = math.floor(frameCount / NUM_FRAMES_PER_VIDEO)
+    # steps = math.floor(frameCount / NUM_FRAMES_PER_VIDEO)
+    steps = 1; 
     j = 0
     prev_frame_none = False
 
@@ -298,7 +302,7 @@ def convert_video_to_numpy(filenames, dense_optical_flow=False):
 
 
 def main(argv):
-  save_video_to_tfrecords(FLAGS.source, FLAGS.output_path, FLAGS.num_videos, dense_optical_flow=FLAGS.optical_flow)
+  save_videos_to_tfrecords(FLAGS.source, FLAGS.output_path, FLAGS.num_videos, dense_optical_flow=FLAGS.optical_flow)
 
 
 
