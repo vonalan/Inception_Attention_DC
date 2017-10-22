@@ -22,25 +22,20 @@ import tensorflow as tf
 FLAGS = None
 FILE_FILTER = '*.avi'
 NUM_FRAMES_PER_VIDEO = 15
-NUM_CHANNELS_VIDEO = 4
-WIDTH_VIDEO = 128
-HEIGHT_VIDEO = 128
-
-SOURCE = '/insert/source/here'
-DESTINATION = '/insert/destination/here'
-
-
-'''NEW DEFINED'''
-SOURCE = '../videos'
-DESTINATION = '../records'
-# FILE_FILTER = '*.mp4'
+NUM_VIDEOS_PER_RECORD = 1
+DENSE_OPTICAL_FLOW = False
 NUM_CHANNELS_VIDEO = 3
 WIDTH_VIDEO = 299
 HEIGHT_VIDEO = 299
-NUM_VIDEOS_PER_RECORD = 1
-CALCULATE_OPTICAL_FLOW = False 
-'''NEW DEFINED'''
 
+SOURCE = r"E:\Users\kingdom\HMDB51\hmdb51_org"
+DESTINATION = r"E:\Users\kingdom\HMDB51\hmdb51_records"
+labels_path  = r"E:\Users\kingdom\HMDB51\hmdb51_labels.txt"
+
+labels = []
+with open(labels_path) as f:
+    lines = f.readlines()
+    labels = [line.strip() for line in lines]
 
 FLAGS = flags.FLAGS
 flags.DEFINE_integer('num_videos', NUM_VIDEOS_PER_RECORD, 'Number of videos stored in one single tfrecords file')
@@ -49,15 +44,17 @@ flags.DEFINE_string('image_color_depth', np.uint8, 'Color depth for the images s
                                                    'Specified as np dtype (e.g. ''np.uint8).')
 flags.DEFINE_string('source', SOURCE, 'Directory with video files')
 flags.DEFINE_string('output_path', DESTINATION, 'Directory for storing tf records')
-flags.DEFINE_boolean('optical_flow', CALCULATE_OPTICAL_FLOW, 'Indictes whether optical flow shall be computed and added as fourth '
+flags.DEFINE_boolean('optical_flow', DENSE_OPTICAL_FLOW, 'Indictes whether optical flow shall be computed and added as fourth '
                                            'channel. Defaults to False')
+
+def _float_feature(value): 
+  return tf.train.Feature(float_list=tf.train.FloatList(value=[value]))
 
 def _int64_feature(value):
   return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
 
 def _bytes_feature(value):
   return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
-
 
 def get_chunks(l, n):
   """Yield successive n-sized chunks from l.
@@ -96,8 +93,6 @@ def compute_dense_optical_flow(prev_image, current_image):
   hsv[..., 2] = cv2.normalize(mag, None, 0, 255, cv2.NORM_MINMAX)
   return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
 
-
-
 def save_video_to_tfrecords(source_path, destination_path, videos_per_file=FLAGS.num_videos, video_filenames=None,
                             dense_optical_flow=False):
   """calls sub-functions convert_video_to_numpy and save_numpy_to_tfrecords in order to directly export tfrecords files
@@ -118,65 +113,53 @@ def save_video_to_tfrecords(source_path, destination_path, videos_per_file=FLAGS
 
   print('Total videos found: ' + str(len(filenames)))
 
-  filenames_split = list(get_chunks(filenames, videos_per_file))
+  # filenames_split = list(get_chunks(filenames, videos_per_file))
+  for filename in filenames:
+      data = convert_video_to_numpy(filename, dense_optical_flow=dense_optical_flow)
+      save_numpy_to_tfrecord(data, destination_path, filename)
 
+def save_numpy_to_tfrecord(data, destination_path, videoname):
+    """Converts an entire dataset into x tfrecords where x=videos/fragmentSize.
+    :param data: ndarray(uint32) of shape (v,i,h,w,c) with v=number of videos, i=number of images, c=number of image
+    channels, h=image height, w=image width
+    :param name: filename; data samples type (train|valid|test)
+    :param fragmentSize: specifies how many videos are stored in one tfrecords file
+    :param current_batch_number: indicates the current batch index (function call within loop)
+    :param total_batch_number: indicates the total number of batches
+    """
 
+    # num_videos = data.shape[0]
+    num_frames = data.shape[0]
+    height = data.shape[1]
+    width = data.shape[2]
+    num_channels = data.shape[3]
 
-  for i, batch in enumerate(filenames_split):
-    data = convert_video_to_numpy(batch, dense_optical_flow=dense_optical_flow)
-    total_batch_number = int(math.ceil(len(filenames)/videos_per_file))
-    print('Batch ' + str(i+1) + '/' + str(total_batch_number))
-    save_numpy_to_tfrecords(data, destination_path, 'train_blobs_batch_', videos_per_file, i+1,
-                            total_batch_number)
+    temp = videoname.split("\\")
+    destination_path = os.path.join(destination_path, temp[-2])
+    if not os.path.exists(destination_path):
+      os.makedirs(destination_path)
 
+    image = data.astype(FLAGS.image_color_depth)
+    image_raw = image.tostring()
 
-def save_numpy_to_tfrecords(data, destination_path, name, fragmentSize, current_batch_number, total_batch_number):
-  """Converts an entire dataset into x tfrecords where x=videos/fragmentSize.
-  :param data: ndarray(uint32) of shape (v,i,h,w,c) with v=number of videos, i=number of images, c=number of image
-  channels, h=image height, w=image width
-  :param name: filename; data samples type (train|valid|test)
-  :param fragmentSize: specifies how many videos are stored in one tfrecords file
-  :param current_batch_number: indicates the current batch index (function call within loop)
-  :param total_batch_number: indicates the total number of batches
-  """
+    feature = dict()
+    feature['frames'] = _int64_feature(num_frames)
+    feature['height'] = _int64_feature(height)
+    feature['width'] = _int64_feature(width)
+    feature['depth'] = _int64_feature(num_channels)
+    feature['label'] = _int64_feature(labels.index(temp[-2]))
+    feature['data'] = _bytes_feature(image_raw)
 
-  num_videos = data.shape[0]
-  num_images = data.shape[1]
-  num_channels = data.shape[4]
-  height = data.shape[2]
-  width = data.shape[3]
+    example = tf.train.Example(features=tf.train.Features(feature=feature))
 
-  writer = None
-  feature = {}
-
-  for videoCount in range((num_videos)):
-
-      if videoCount % fragmentSize == 0:
-          if writer is not None:
-              writer.close()
-          filename = os.path.join(destination_path, name + str(current_batch_number) + '_of_' + str(total_batch_number) + '.tfrecords')
-          print('Writing', filename)
-          writer = tf.python_io.TFRecordWriter(filename)
-
-      for imageCount in range(num_images):
-          path = 'blob' + '/' + str(imageCount)
-          image = data[videoCount, imageCount, :, :, :]
-          image = image.astype(FLAGS.image_color_depth)
-          image_raw = image.tostring()
-
-          feature[path]= _bytes_feature(image_raw)
-          feature['height'] = _int64_feature(height)
-          feature['width'] = _int64_feature(width)
-          feature['depth'] = _int64_feature(num_channels)
-
-
-      example = tf.train.Example(features=tf.train.Features(feature=feature))
-      writer.write(example.SerializeToString())
-  if writer is not None:
+    recordname = os.path.join(destination_path, temp[-1] + '.tfrecords')
+    print('Writing', recordname)
+    writer = tf.python_io.TFRecordWriter(recordname)
+    writer.write(example.SerializeToString())
     writer.close()
 
 
-def convert_video_to_numpy(filenames, dense_optical_flow=False):
+def convert_video_to_numpy(filename, dense_optical_flow=False):
   """Generates an ndarray from multiple video files given by filenames.
   Implementation chooses frame step size automatically for a equal separation distribution of the video images.
 
@@ -186,10 +169,10 @@ def convert_video_to_numpy(filenames, dense_optical_flow=False):
   (h,w)=height and width of image, c=channel, if optical flow is used: ndarray(uint32) of (v,i,h,w,
   c+1)"""
   global NUM_CHANNELS_VIDEO
-  if not filenames:
-    raise RuntimeError('No data files found.')
-
-  number_of_videos = len(filenames)
+  # if not filenames:
+  #   raise RuntimeError('No data files found.')
+  #
+  # number_of_videos = len(filenames)
 
   if dense_optical_flow:
     # need an additional channel for the optical flow with one exception:
@@ -199,8 +182,6 @@ def convert_video_to_numpy(filenames, dense_optical_flow=False):
   else:
     # if no optical flow, make everything normal:
     num_real_image_channel = NUM_CHANNELS_VIDEO
-
-  data = []
 
   def video_file_to_ndarray(i, filename):
     image = np.zeros((HEIGHT_VIDEO, WIDTH_VIDEO, num_real_image_channel), dtype=FLAGS.image_color_depth)
@@ -239,7 +220,7 @@ def convert_video_to_numpy(filenames, dense_optical_flow=False):
             print("reducing step size due to error")
             j = 0
             cap.release()
-            cap = getVideoCapture(filenames[i])
+            cap = getVideoCapture(filename)
             # wait for image retrieval to be ready
             cv2.waitKey(3000)
             video.fill(0)
@@ -279,21 +260,13 @@ def convert_video_to_numpy(filenames, dense_optical_flow=False):
         else:
           getNextFrame(cap)
 
-    print(str(i + 1) + " of " + str(number_of_videos) + " videos processed", filenames[i])
+    # print(str(i + 1) + " of " + str(number_of_videos) + " videos processed", filenames[i])
 
     v = video.copy()
     cap.release()
     return v
 
-  for i, file in enumerate(filenames):
-    try:
-      v = video_file_to_ndarray(i, file)
-      data.append(v)
-    except Exception as e:
-      print(e)
-
-
-  return np.array(data)
+  return video_file_to_ndarray(0, filename)
 
 
 
