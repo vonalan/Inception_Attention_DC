@@ -28,9 +28,9 @@ NUM_CHANNELS_VIDEO = 3
 WIDTH_VIDEO = 299
 HEIGHT_VIDEO = 299
 
-SOURCE = r"E:\Users\kingdom\HMDB51\hmdb51_org"
-DESTINATION = r"E:\Users\kingdom\HMDB51\hmdb51_records"
-labels_path  = r"E:\Users\kingdom\HMDB51\hmdb51_labels.txt"
+SOURCE = r"videos"
+DESTINATION = r"records"
+labels_path  = r"labels.txt"
 
 labels = []
 with open(labels_path) as f:

@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import os
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-data_path = r'E:\Users\kingdom\HMDB51\hmdb51_records\April_09_brush_hair_u_nm_np1_ba_goo_0.avi.tfrecords'  # tfrecords 文件的地址
+data_path = r'records/lauph/laugh.avi.tfrecords'  # tfrecords 文件的地址
 
 #图片存放位置
 DATA_DIR = 'data/'
@@ -42,33 +42,40 @@ def read_and_decode(filename_queue):
 
     return image,label
 
-#用于获取一个batch_size的图像和label
-def inputs(data_set,batch_size,num_epochs):
-    # if not num_epochs:
-    #     num_epochs = None
-    # if data_set == 'train':
-    #     file = TRAIN_FILE
-    # else:
-    #     file = VALIDATION_FILE
-    file = data_path
-    with tf.name_scope('input') as scope:
-        filename_queue = tf.train.string_input_producer([file], num_epochs=num_epochs)
-    image,label = read_and_decode(filename_queue)
-    # #随机获得batch_size大小的图像和label
-    # images,labels = tf.train.shuffle_batch([image, label], 
-    #     batch_size=batch_size,
-    #     num_threads=64,
-    #     capacity=1000 + 3 * batch_size,
-    #     min_after_dequeue=1000
-    # )
+# #用于获取一个batch_size的图像和label
+# def inputs(data_set,batch_size,num_epochs):
+#     # if not num_epochs:
+#     #     num_epochs = None
+#     # if data_set == 'train':
+#     #     file = TRAIN_FILE
+#     # else:
+#     #     file = VALIDATION_FILE
+#     file = data_path
+#     with tf.name_scope('input') as scope:
+#         filename_queue = tf.train.string_input_producer([file], num_epochs=num_epochs)
+#     image,label = read_and_decode(filename_queue)
+#     # #随机获得batch_size大小的图像和label
+#     # images,labels = tf.train.shuffle_batch([image, label],
+#     #     batch_size=batch_size,
+#     #     num_threads=64,
+#     #     capacity=1000 + 3 * batch_size,
+#     #     min_after_dequeue=1000
+#     # )
+#
+#     return image,label
 
-    return image,label
+filename_queue = tf.train.string_input_producer([data_path], num_epochs=1)
+image, label = read_and_decode(filename_queue)
 
-image, labels = inputs('', 1, 1)
-init = tf.global_variables_initializer()
-sess = tf.Session() 
-sess.run(init)
-
-sess.run(image)
-# for im in image:
-#     print(sess.run(im).shape)
+with tf.Session() as sess: #开始一个会话
+    init_op = tf.initialize_all_variables()
+    sess.run(init_op)
+    coord=tf.train.Coordinator()
+    threads= tf.train.start_queue_runners(coord=coord)
+    for i in range(1):
+        example, l = sess.run([image,label])#在会话中取出image和label
+        # img=Image.fromarray(example, 'RGB')#这里Image是之前提到的
+        # img.save(cwd+str(i)+'_''Label_'+str(l)+'.jpg')#存下图片
+        print(example.shape, l)
+    coord.request_stop()
+    coord.join(threads)
