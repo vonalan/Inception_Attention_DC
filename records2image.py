@@ -34,11 +34,13 @@ with tf.Session() as sess:
     coord = tf.train.Coordinator()
     threads = tf.train.start_queue_runners(coord=coord)
 
-    for i in range(100):
+    epoch = 0
+    for i in range(16):
         # imgArr, imgLabel = sess.run([img, label])
         # print (imgArr.shape, imgLabel)
         imgArr, imgLabel = sess.run([img_batch, label_batch])
-        print(imgArr.shape, imgLabel)
+        print(epoch, imgArr.shape, imgLabel)
+        epoch += 1
 
     coord.request_stop()
     coord.join(threads)

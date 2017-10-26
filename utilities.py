@@ -20,8 +20,20 @@ def get_min_frame_of_videos(root, postfix='*.avi'):
             max_frame = frameCount
     return min_frame, max_frame
 
-if __name__ == "__main__":
-    root = r"E:\Users\kingdom\HMDB51\hmdb51_org"
-    min_frame, max_frame = get_min_frame_of_videos(root)
-    print(min_frame, max_frame)
+def padded_batch_test(number):
+    dataset = tf.contrib.data.Dataset.range(number)
+    dataset = dataset.map(lambda x: tf.fill([tf.cast(x, tf.int32)], x))
+    dataset = dataset.padded_batch(4, padded_shapes=[None])
+    iterator = dataset.make_one_shot_iterator()
+    next_element = iterator.get_next()
+    return next_element
 
+if __name__ == "__main__":
+    next_element = padded_batch_test(10)
+
+    sess = tf.Session()
+    for i in range(100):
+        try:
+            print(sess.run(next_element))
+        except:
+            break
