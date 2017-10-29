@@ -3,8 +3,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-data_path = r"F:\Users\kingdom\Documents\GIT\Inception_Attention_DC\records\smile\smiles.avi.tfrecords"  # tfrecords 文件的地址
+# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+data_path1 = r"E:\Users\kingdom\Inception_Attention_DC\records\talk\talk.avi.tfrecords"
+data_path2 = r"E:\Users\kingdom\Inception_Attention_DC\records\laugh\laugh.avi.tfrecords"
+data_path3 = r"E:\Users\kingdom\Inception_Attention_DC\records\smile\smiles.avi.tfrecords"
 
 #图片存放位置
 DATA_DIR = 'data/'
@@ -25,13 +27,14 @@ feature = {
         'label': tf.FixedLenFeature([], tf.int64)
     }
 
-fileNameQue = tf.train.string_input_producer([data_path])
+fileNameQue = tf.train.string_input_producer([data_path1, data_path2, data_path3])
 reader = tf.TFRecordReader()
 key,value = reader.read(fileNameQue)
 features = tf.parse_single_example(value,features=feature)
 
 img = tf.decode_raw(features["data"], tf.uint8)
 label = tf.cast(features["label"], tf.int32)
+label = tf.fill()
 img = tf.reshape(img, (-1, 299, 299, 3))
 # img_batch, label_batch = tf.train.shuffle_batch([img, label],
 #                                                 batch_size=30, capacity=2000,
