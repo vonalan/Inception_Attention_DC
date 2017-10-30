@@ -147,10 +147,10 @@ def create_video_lists(video_dir, split_dir, sround=1):
         if len(file_list) < 100:
             tf.logging.warning(
                 'WARNING: Folder has less than 100 videos, which may cause issues.')
-        elif len(file_list) > MAX_NUM_VIDEOS_PER_CLASS:
+        elif len(file_list) > 100:
             tf.logging.warning(
                 'WARNING: Folder {} has more than {} images. Some images will '
-                'never be selected.'.format(dir_name, MAX_NUM_VIDEOS_PER_CLASS))
+                'never be selected.'.format(dir_name, 100))
         label_name = re.sub(r'[^a-z0-9]+', ' ', dir_name.lower())
 
         training_videos = []
@@ -914,6 +914,34 @@ def create_model_info(architecture):
       'input_std': input_std,
   }
 
+def add_video_decoding(input_width, input_height, input_depth, input_mean,
+                      input_std):
+    def extract_frame_from_video(string, mode=None):
+        pass
+  """Adds operations that perform JPEG decoding and resizing to the graph..
+
+  Args:
+    input_width: Desired width of the image fed into the recognizer graph.
+    input_height: Desired width of the image fed into the recognizer graph.
+    input_depth: Desired channels of the image fed into the recognizer graph.
+    input_mean: Pixel value that should be zero in the image for the graph.
+    input_std: How much to divide the pixel values by before recognition.
+
+  Returns:
+    Tensors for the node to feed JPEG data into, and the output of the
+      preprocessing steps.
+  """
+  jpeg_data = tf.placeholder(tf.string, name='DecodeJPGInput')
+  decoded_image = tf.image.decode_jpeg(jpeg_data, channels=input_depth)
+  decoded_image_as_float = tf.cast(decoded_image, dtype=tf.float32)
+  decoded_image_4d = tf.expand_dims(decoded_image_as_float, 0)
+  resize_shape = tf.stack([input_height, input_width])
+  resize_shape_as_int = tf.cast(resize_shape, dtype=tf.int32)
+  resized_image = tf.image.resize_bilinear(decoded_image_4d,
+                                           resize_shape_as_int)
+  offset_image = tf.subtract(resized_image, input_mean)
+  mul_image = tf.multiply(offset_image, 1.0 / input_std)
+  return jpeg_data, mul_image
 
 def add_jpeg_decoding(input_width, input_height, input_depth, input_mean,
                       input_std):
@@ -963,15 +991,14 @@ def main(_):
       create_model_graph(model_info))
 
   # Look at the folder structure, and create lists of all the images.
-  image_lists = create_image_lists(FLAGS.image_dir, FLAGS.testing_percentage,
-                                   FLAGS.validation_percentage)
-  class_count = len(image_lists.keys())
+  video_lists = create_video_lists(FLAGS.video_dir, FLAGS.split_dir, FLAGS.round)
+  class_count = len(video_lists.keys())
   if class_count == 0:
-    tf.logging.error('No valid folders of images found at ' + FLAGS.image_dir)
+    tf.logging.error('No valid folders of video found at ' + FLAGS.video_dir)
     return -1
   if class_count == 1:
-    tf.logging.error('Only one valid folder of images found at ' +
-                     FLAGS.image_dir +
+    tf.logging.error('Only one valid folder of video found at ' +
+                     FLAGS.video_dir +
                      ' - multiple classes are needed for classification.')
     return -1
 
