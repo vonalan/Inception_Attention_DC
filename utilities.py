@@ -7,6 +7,10 @@ import sys
 import tensorflow as tf
 import cv2
 
+data_path1 = r"records\talk\talk.avi.tfrecords"
+data_path2 = r"records\laugh\laugh.avi.tfrecords"
+data_path3 = r"records\smile\smiles.avi.tfrecords"
+
 def get_min_frame_of_videos(root, postfix='*.avi'):
     min_frame, max_frame = 300, 0
     filenames = tf.gfile.Glob(os.path.join(root, postfix))
@@ -28,12 +32,43 @@ def padded_batch_test(number):
     next_element = iterator.get_next()
     return next_element
 
-if __name__ == "__main__":
-    next_element = padded_batch_test(10)
+def parse_tf_example_protocol_buffer_messages():
+    def _parse_function(example_proto):
+        features = {
+            'frames': tf.FixedLenFeature([], tf.int64),
+            'height': tf.FixedLenFeature([], tf.int64),
+            'width': tf.FixedLenFeature([], tf.int64),
+            'depth': tf.FixedLenFeature([], tf.int64),
+            'data': tf.FixedLenFeature([], tf.string),
+            'label': tf.FixedLenFeature([], tf.int64)
+        }
+        parsed_features = tf.parse_single_example(example_proto, features)
+        data = tf.decode_raw(parsed_features["data"], tf.uint8)
+        label = tf.cast(parsed_features["label"], tf.int32)
 
+        data = tf.reshape(data, [-1, 299, 299, 3])
+        label = tf.cast(label, tf.int32)
+        label = tf.fill([tf.cast(tf.shape(data)[0], tf.int32)], label)
+
+        return data, label
+
+    filename = tf.placeholder(tf.string, shape=[None], name='decodeVIDEOinput')
+    dataset = tf.contrib.data.TFRecordDataset(filename)
+    dataset = dataset.map(_parse_function)
+    # dataset = dataset.shuffle(10000)
+    # dataset = dataset.batch(3)
+
+    iterator = dataset.make_initializable_iterator()
+    next_element = iterator.get_next()
+    return iterator, filename, next_element
+
+
+if __name__ == "__main__":
     sess = tf.Session()
-    for i in range(100):
-        try:
-            print(sess.run(next_element))
-        except:
-            break
+
+    filenames = [data_path2, data_path3, data_path1]
+    for name in filenames:
+        iterator, filename, next_element = parse_tf_example_protocol_buffer_messages()
+        sess.run(iterator.initializer, feed_dict={filename:[name]})
+        data, label = sess.run(next_element)
+        print(data.shape, label.shape, label)

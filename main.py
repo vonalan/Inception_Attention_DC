@@ -709,6 +709,11 @@ def variable_summaries(var):
     tf.summary.scalar('min', tf.reduce_min(var))
     tf.summary.histogram('histogram', var)
 
+def add_lstm_layer():
+    pass
+
+def add_attention_block():
+    pass
 
 def add_final_training_ops(class_count, final_tensor_name, bottleneck_tensor,
                            bottleneck_tensor_size):
@@ -914,34 +919,8 @@ def create_model_info(architecture):
       'input_std': input_std,
   }
 
-def add_video_decoding(input_width, input_height, input_depth, input_mean,
-                      input_std):
-    def extract_frame_from_video(string, mode=None):
-        pass
-  """Adds operations that perform JPEG decoding and resizing to the graph..
-
-  Args:
-    input_width: Desired width of the image fed into the recognizer graph.
-    input_height: Desired width of the image fed into the recognizer graph.
-    input_depth: Desired channels of the image fed into the recognizer graph.
-    input_mean: Pixel value that should be zero in the image for the graph.
-    input_std: How much to divide the pixel values by before recognition.
-
-  Returns:
-    Tensors for the node to feed JPEG data into, and the output of the
-      preprocessing steps.
-  """
-  jpeg_data = tf.placeholder(tf.string, name='DecodeJPGInput')
-  decoded_image = tf.image.decode_jpeg(jpeg_data, channels=input_depth)
-  decoded_image_as_float = tf.cast(decoded_image, dtype=tf.float32)
-  decoded_image_4d = tf.expand_dims(decoded_image_as_float, 0)
-  resize_shape = tf.stack([input_height, input_width])
-  resize_shape_as_int = tf.cast(resize_shape, dtype=tf.int32)
-  resized_image = tf.image.resize_bilinear(decoded_image_4d,
-                                           resize_shape_as_int)
-  offset_image = tf.subtract(resized_image, input_mean)
-  mul_image = tf.multiply(offset_image, 1.0 / input_std)
-  return jpeg_data, mul_image
+def add_video_decoding():
+    pass
 
 def add_jpeg_decoding(input_width, input_height, input_depth, input_mean,
                       input_std):
