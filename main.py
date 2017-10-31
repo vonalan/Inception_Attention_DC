@@ -157,7 +157,7 @@ def create_video_lists(video_dir, split_dir, sround=1):
         testing_videos = []
         validation_videos = []
 
-        print(split_dir, dir_name)
+        # print(split_dir, dir_name)
         split_file_name = os.path.join(split_dir, dir_name + '_test_split%d.txt'%(sround))
         rf = open(split_file_name)
         temp = rf.readlines()
@@ -709,13 +709,26 @@ def variable_summaries(var):
     tf.summary.scalar('min', tf.reduce_min(var))
     tf.summary.histogram('histogram', var)
 
-def add_lstm_layer():
+def add_lstm_layer(class_count, final_tensor_name, bottleneck_tensor,
+                   bottleneck_tensor_size):
     pass
 
-def add_attention_block():
-    pass
+def add_attention_block(class_count, aggregated_tensor_name, bottleneck_tensor,
+                   bottleneck_tensor_size):
+    with tf.name_scope('input'):
+        bottleneck_input = tf.placeholder_with_default(
+            bottleneck_tensor,
+            shape=[None, bottleneck_tensor_size],
+            name='BottleneckInputPlaceholder')
+    with tf.name_scope('attention_block_0'):
+        Q = tf.Variable(tf.random_normal([bottleneck_tensor_size, 1]))
+        E = tf.exp(tf.matmul(bottleneck_tensor, Q))
+        A = tf.div(E, tf.reduce_sum(E))
+        R = tf.reduce_sum(tf.multiply(bottleneck_tensor, A), axis=0)
+        aggregated_tensor = tf.reshape(R, (-1, bottleneck_tensor_size), name=aggregated_tensor_name)
+    return bottleneck_input, aggregated_tensor
 
-def add_final_training_ops(class_count, final_tensor_name, bottleneck_tensor,
+def add_final_training_ops(class_count, final_tensor_name, aggregated_tensor,
                            bottleneck_tensor_size):
   """Adds a new softmax and fully-connected layer for training.
 
@@ -738,8 +751,8 @@ def add_final_training_ops(class_count, final_tensor_name, bottleneck_tensor,
     bottleneck input and ground truth input.
   """
   with tf.name_scope('input'):
-    bottleneck_input = tf.placeholder_with_default(
-        bottleneck_tensor,
+    aggregated_input = tf.placeholder_with_default(
+        aggregated_tensor,
         shape=[None, bottleneck_tensor_size],
         name='BottleneckInputPlaceholder')
 
@@ -762,7 +775,7 @@ def add_final_training_ops(class_count, final_tensor_name, bottleneck_tensor,
       layer_biases = tf.Variable(tf.zeros([class_count]), name='final_biases')
       variable_summaries(layer_biases)
     with tf.name_scope('Wx_plus_b'):
-      logits = tf.matmul(bottleneck_input, layer_weights) + layer_biases
+      logits = tf.matmul(aggregated_input, layer_weights) + layer_biases
       tf.summary.histogram('pre_activations', logits)
 
   final_tensor = tf.nn.softmax(logits, name=final_tensor_name)
@@ -779,7 +792,7 @@ def add_final_training_ops(class_count, final_tensor_name, bottleneck_tensor,
     optimizer = tf.train.GradientDescentOptimizer(FLAGS.learning_rate)
     train_step = optimizer.minimize(cross_entropy_mean)
 
-  return (train_step, cross_entropy_mean, bottleneck_input, ground_truth_input,
+  return (train_step, cross_entropy_mean, aggregated_input, ground_truth_input,
           final_tensor)
 
 
@@ -843,8 +856,8 @@ def create_model_info(architecture):
   architecture = architecture.lower()
   if architecture == 'inception_v3':
     # pylint: disable=line-too-long
-    # data_url = 'http://download.tensorflow.org/models/image/imagenet/inception-2015-12-05.tgz'
-    data_url = 'https://storage.googleapis.com/download.tensorflow.org/models/inception_v3_2016_08_28_frozen.pb.tar.gz'
+    data_url = 'http://download.tensorflow.org/models/image/imagenet/inception-2015-12-05.tgz'
+    # data_url = 'https://storage.googleapis.com/download.tensorflow.org/models/inception_v3_2016_08_28_frozen.pb.tar.gz'
     # pylint: enable=line-too-long
     bottleneck_tensor_name = 'pool_3/_reshape:0'
     bottleneck_tensor_size = 2048
@@ -919,8 +932,36 @@ def create_model_info(architecture):
       'input_std': input_std,
   }
 
-def add_video_decoding():
-    pass
+def add_video_decoding(input_width, input_height, input_depth,
+                       input_mean, input_std):
+    def _parse_function(example_proto):
+        features = {
+            'frames': tf.FixedLenFeature([], tf.int64),
+            'height': tf.FixedLenFeature([], tf.int64),
+            'width': tf.FixedLenFeature([], tf.int64),
+            'depth': tf.FixedLenFeature([], tf.int64),
+            'data': tf.FixedLenFeature([], tf.string),
+            'label': tf.FixedLenFeature([], tf.int64)
+        }
+        parsed_features = tf.parse_single_example(example_proto, features)
+        data = tf.decode_raw(parsed_features["data"], tf.uint8)
+        label = tf.cast(parsed_features["label"], tf.int32)
+
+        data = tf.reshape(data, [-1, 299, 299, 3])
+        label = tf.cast(label, tf.int32)
+        label = tf.fill([tf.cast(tf.shape(data)[0], tf.int32)], label)
+
+        return data, label
+
+    filename = tf.placeholder(tf.string, shape=[None], name='decodeVIDEOinput')
+    dataset = tf.contrib.data.TFRecordDataset(filename)
+    dataset = dataset.map(_parse_function)
+    # dataset = dataset.shuffle(10000)
+    # dataset = dataset.batch(3)
+
+    iterator = dataset.make_initializable_iterator()
+    next_element = iterator.get_next()
+    return iterator, filename, next_element
 
 def add_jpeg_decoding(input_width, input_height, input_depth, input_mean,
                       input_std):
@@ -970,7 +1011,7 @@ def main(_):
       create_model_graph(model_info))
 
   # Look at the folder structure, and create lists of all the images.
-  video_lists = create_video_lists(FLAGS.video_dir, FLAGS.split_dir, FLAGS.round)
+  video_lists = create_video_lists(FLAGS.video_dir, FLAGS.split_dir, FLAGS.split_round)
   class_count = len(video_lists.keys())
   if class_count == 0:
     tf.logging.error('No valid folders of video found at ' + FLAGS.video_dir)
@@ -980,11 +1021,13 @@ def main(_):
                      FLAGS.video_dir +
                      ' - multiple classes are needed for classification.')
     return -1
+  print('class_count: %d'%(class_count))
 
   # See if the command-line flags mean we're applying any distortions.
   do_distort_images = should_distort_images(
       FLAGS.flip_left_right, FLAGS.random_crop, FLAGS.random_scale,
       FLAGS.random_brightness)
+  print('do_distort_images: %d'%(do_distort_images))
 
   with tf.Session(graph=graph) as sess:
     # Set up the image decoding sub-graph.
@@ -992,6 +1035,7 @@ def main(_):
         model_info['input_width'], model_info['input_height'],
         model_info['input_depth'], model_info['input_mean'],
         model_info['input_std'])
+    print('add_jpeg_decoding')
 
     if do_distort_images:
       # We will be applying distortions, so setup the operations we'll need.
@@ -1002,17 +1046,22 @@ def main(_):
            model_info['input_height'], model_info['input_depth'],
            model_info['input_mean'], model_info['input_std'])
     else:
-      # We'll make sure we've calculated the 'bottleneck' image summaries and
-      # cached them on disk.
-      cache_bottlenecks(sess, image_lists, FLAGS.image_dir,
-                        FLAGS.bottleneck_dir, jpeg_data_tensor,
-                        decoded_image_tensor, resized_image_tensor,
-                        bottleneck_tensor, FLAGS.architecture)
+      # # We'll make sure we've calculated the 'bottleneck' image summaries and
+      # # cached them on disk.
+      # cache_bottlenecks(sess, video_lists, FLAGS.video_dir,
+      #                   FLAGS.bottleneck_dir, jpeg_data_tensor,
+      #                   decoded_image_tensor, resized_image_tensor,
+      #                   bottleneck_tensor, FLAGS.architecture)
+      pass
+
+    # add a attention layer that we'll be training
+    (bottleneck_input, aggregated_tensor) = add_attention_block(len(video_lists.keys()), FLAGS.aggregated_tensor_name, bottleneck_tensor,
+         model_info['bottleneck_tensor_size'])
 
     # Add the new layer that we'll be training.
-    (train_step, cross_entropy, bottleneck_input, ground_truth_input,
+    (train_step, cross_entropy, aggregated_input, ground_truth_input,
      final_tensor) = add_final_training_ops(
-         len(image_lists.keys()), FLAGS.final_tensor_name, bottleneck_tensor,
+         len(video_lists.keys()), FLAGS.final_tensor_name, aggregated_tensor,
          model_info['bottleneck_tensor_size'])
 
     # Create the operations we need to evaluate the accuracy of our new layer.
@@ -1038,13 +1087,13 @@ def main(_):
       if do_distort_images:
         (train_bottlenecks,
          train_ground_truth) = get_random_distorted_bottlenecks(
-             sess, image_lists, FLAGS.train_batch_size, 'training',
+             sess, video_lists, FLAGS.train_batch_size, 'training',
              FLAGS.image_dir, distorted_jpeg_data_tensor,
              distorted_image_tensor, resized_image_tensor, bottleneck_tensor)
       else:
         (train_bottlenecks,
          train_ground_truth, _) = get_random_cached_bottlenecks(
-             sess, image_lists, FLAGS.train_batch_size, 'training',
+             sess, video_lists, FLAGS.train_batch_size, 'training',
              FLAGS.bottleneck_dir, FLAGS.image_dir, jpeg_data_tensor,
              decoded_image_tensor, resized_image_tensor, bottleneck_tensor,
              FLAGS.architecture)
@@ -1069,7 +1118,7 @@ def main(_):
                         (datetime.now(), i, cross_entropy_value))
         validation_bottlenecks, validation_ground_truth, _ = (
             get_random_cached_bottlenecks(
-                sess, image_lists, FLAGS.validation_batch_size, 'validation',
+                sess, video_lists, FLAGS.validation_batch_size, 'validation',
                 FLAGS.bottleneck_dir, FLAGS.image_dir, jpeg_data_tensor,
                 decoded_image_tensor, resized_image_tensor, bottleneck_tensor,
                 FLAGS.architecture))
@@ -1099,7 +1148,7 @@ def main(_):
     # some new images we haven't used before.
     test_bottlenecks, test_ground_truth, test_filenames = (
         get_random_cached_bottlenecks(
-            sess, image_lists, FLAGS.test_batch_size, 'testing',
+            sess, video_lists, FLAGS.test_batch_size, 'testing',
             FLAGS.bottleneck_dir, FLAGS.image_dir, jpeg_data_tensor,
             decoded_image_tensor, resized_image_tensor, bottleneck_tensor,
             FLAGS.architecture))
@@ -1116,13 +1165,13 @@ def main(_):
         if predictions[i] != test_ground_truth[i].argmax():
           tf.logging.info('%70s  %s' %
                           (test_filename,
-                           list(image_lists.keys())[predictions[i]]))
+                           list(video_lists.keys())[predictions[i]]))
 
     # Write out the trained graph and labels with the weights stored as
     # constants.
     save_graph_to_file(sess, graph, FLAGS.output_graph)
     with gfile.FastGFile(FLAGS.output_labels, 'w') as f:
-      f.write('\n'.join(image_lists.keys()) + '\n')
+      f.write('\n'.join(video_lists.keys()) + '\n')
 
 
 if __name__ == '__main__':
@@ -1132,6 +1181,24 @@ if __name__ == '__main__':
       type=str,
       default='images',
       help='Path to folders of labeled images.'
+  )
+  parser.add_argument(
+      '--video_dir',
+      type=str,
+      default=r'E:\Users\kingdom\HMDB51\hmdb51_org',
+      help='Path to folders of labeled videos.'
+  )
+  parser.add_argument(
+      '--split_dir',
+      type=str,
+      default=r'E:\Users\kingdom\HMDB51\testTrainMulti_7030_splits',
+      help='Path to folders of split files.'
+  )
+  parser.add_argument(
+      '--split_round',
+      type=int,
+      default=1,
+      help='which round will be processed.'
   )
   parser.add_argument(
       '--output_graph',
@@ -1249,6 +1316,14 @@ if __name__ == '__main__':
       type=str,
       default='tmp/bottleneck',
       help='Path to cache bottleneck layer values as files.'
+  )
+  parser.add_argument(
+      '--aggregated_tensor_name',
+      type=str,
+      default='aggregated_result',
+      help="""\
+        The name of the output attention layer in the retrained graph.\
+        """
   )
   parser.add_argument(
       '--final_tensor_name',
