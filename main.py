@@ -949,8 +949,8 @@ def create_model_info(architecture):
   architecture = architecture.lower()
   if architecture == 'inception_v3':
     # pylint: disable=line-too-long
-    data_url = 'http://download.tensorflow.org/models/image/imagenet/inception-2015-12-05.tgz'
-    # data_url = 'https://storage.googleapis.com/download.tensorflow.org/models/inception_v3_2016_08_28_frozen.pb.tar.gz'
+    data_url = 'http://download.tensorflow.org/models/image/imagenet/inception-2015-12-05.tgz'  # incepion-v3-2015-12-05
+    # data_url = 'https://storage.googleapis.com/download.tensorflow.org/models/inception_v3_2016_08_28_frozen.pb.tar.gz'   # inception_v3_2016_08_28
     # pylint: enable=line-too-long
     bottleneck_tensor_name = 'pool_3/_reshape:0'
     bottleneck_tensor_size = 2048
