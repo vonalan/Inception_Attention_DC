@@ -120,6 +120,70 @@ FLAGS = None
 # need to update these to reflect the values in the network you're using.
 MAX_NUM_IMAGES_PER_CLASS = 2 ** 27 - 1  # ~134M
 
+def create_record_lists(record_dir, split_dir, sround=1):
+    if not gfile.Exists(record_dir):
+        tf.logging.error("Video directory '" + record_dir + "' not found. ")
+        return None
+    result = {}
+    sub_dirs = [x[0] for x in gfile.Walk(record_dir)]
+    print(sub_dirs)
+    is_root_dir = True
+    for sub_dir in sub_dirs:
+        if is_root_dir:
+            is_root_dir = False
+            continue
+        extensions = ['avi.tfrecords']
+        file_list = []
+        dir_name = os.path.basename(sub_dir)
+        if dir_name == record_dir:
+            continue
+        tf.logging.info("Looking for images in '" + dir_name + "'")
+        for extension in extensions:
+            file_glob = os.path.join(record_dir, dir_name, '*.' + extension)
+            file_list.extend(gfile.Glob(file_glob))
+        if not file_list:
+            tf.logging.warning('No files found')
+            continue
+        if len(file_list) < 100:
+            tf.logging.warning(
+                'WARNING: Folder has less than 100 videos, which may cause issues.')
+        elif len(file_list) > 100:
+            tf.logging.warning(
+                'WARNING: Folder {} has more than {} images. Some images will '
+                'never be selected.'.format(dir_name, 100))
+        label_name = re.sub(r'[^a-z0-9]+', ' ', dir_name.lower())
+
+        training_videos = []
+        testing_videos = []
+        validation_videos = []
+
+        # print(split_dir, dir_name)
+        split_file_name = os.path.join(split_dir, dir_name + '_test_split%d.txt'%(sround))
+        rf = open(split_file_name)
+        temp = rf.readlines()
+        rf.close()
+        temp = [line.strip().split() for line in temp]
+        mask = {item[0]:item[1] for item in temp}
+
+        for file_name in file_list:
+            base_name = os.path.basename(file_name)
+            base_name = base_name[:-10] # intended for records
+            if mask[base_name] == '1': # training set
+                training_videos.append(base_name)
+            elif mask[base_name] == '2': # test set
+                testing_videos.append(base_name)
+            elif mask[base_name] == '0': # not used | valiation set
+                validation_videos.append(base_name)
+            else:
+                raise ValueError("the mask of video must be 0, 1 or 2! ")
+        result[label_name] = {
+            'dir': dir_name,
+            'training': training_videos,
+            'testing': testing_videos,
+            'validation': validation_videos,
+        }
+    return result
+
 def create_video_lists(video_dir, split_dir, sround=1):
     if not gfile.Exists(video_dir):
         tf.logging.error("Video directory '" + video_dir + "' not found. ")
@@ -278,12 +342,20 @@ def run_bottleneck_on_image(sess, image_data, image_data_tensor,
   Returns:
     Numpy array of bottleneck values.
   """
-  # First decode the JPEG image, resize it, and rescale the pixel values.
-  resized_input_values = sess.run(decoded_image_tensor,
-                                  {image_data_tensor: image_data})
-  # Then run it through the recognition network.
+  # # First decode the JPEG image, resize it, and rescale the pixel values.
+  # resized_input_values = sess.run(decoded_image_tensor,
+  #                                 {image_data_tensor: image_data})
+  # # Then run it through the recognition network.
+  # bottleneck_values = sess.run(bottleneck_tensor,
+  #                              {resized_input_tensor: resized_input_values})
+
+  '''
+  how to organize this code block gracefully???
+  where will raw data be decoded???
+  '''
   bottleneck_values = sess.run(bottleneck_tensor,
-                               {resized_input_tensor: resized_input_values})
+                               {resized_input_tensor: image_data})
+  ''''''
   bottleneck_values = np.squeeze(bottleneck_values)
   return bottleneck_values
 
@@ -332,30 +404,49 @@ bottleneck_path_2_bottleneck_values = {}
 
 
 def create_bottleneck_file(bottleneck_path, image_lists, label_name, index,
-                           image_dir, category, sess, jpeg_data_tensor,
+                           image_dir, category, sess, iterator, jpeg_data_tensor,
                            decoded_image_tensor, resized_input_tensor,
                            bottleneck_tensor):
   """Create a single bottleneck file."""
   tf.logging.info('Creating bottleneck at ' + bottleneck_path)
   image_path = get_image_path(image_lists, label_name, index,
                               image_dir, category)
+  image_path += '.tfrecords' # intended for record files
   if not gfile.Exists(image_path):
     tf.logging.fatal('File does not exist %s', image_path)
-  image_data = gfile.FastGFile(image_path, 'rb').read()
-  try:
-    bottleneck_values = run_bottleneck_on_image(
-        sess, image_data, jpeg_data_tensor, decoded_image_tensor,
-        resized_input_tensor, bottleneck_tensor)
-  except Exception as e:
-    raise RuntimeError('Error during processing file %s (%s)' % (image_path,
-                                                                 str(e)))
+
+  # image_data = gfile.FastGFile(image_path, 'rb').read()
+  sess.run(iterator.initializer, feed_dict={jpeg_data_tensor:[image_path]})
+  decoded_image_data = sess.run(decoded_image_tensor) #[-1, 299, 299, 3]
+  shape = np.shape(decoded_image_data)
+  num_samples = shape[0]
+
+  bottleneck_values = []
+  for index in range(num_samples):
+      image_data = decoded_image_data[index,:,:,:]
+      image_data = np.expand_dims(image_data,0)
+      try:
+          temp_values = run_bottleneck_on_image(
+              sess, image_data, jpeg_data_tensor, decoded_image_tensor,
+              resized_input_tensor, bottleneck_tensor)
+
+          '''
+          is it necessary to flatten the array to list???
+          '''
+          temp_values = temp_values.tolist()
+          bottleneck_values += temp_values
+      except Exception as e:
+          raise RuntimeError('Error during processing file %s (%s)' % (image_path,
+                                                                       str(e)))
+
   bottleneck_string = ','.join(str(x) for x in bottleneck_values)
   with open(bottleneck_path, 'w') as bottleneck_file:
     bottleneck_file.write(bottleneck_string)
 
 
+# get or create bottleneck for each video
 def get_or_create_bottleneck(sess, image_lists, label_name, index, image_dir,
-                             category, bottleneck_dir, jpeg_data_tensor,
+                             category, bottleneck_dir, iterator, jpeg_data_tensor,
                              decoded_image_tensor, resized_input_tensor,
                              bottleneck_tensor, architecture):
   """Retrieves or calculates bottleneck values for an image.
@@ -391,7 +482,7 @@ def get_or_create_bottleneck(sess, image_lists, label_name, index, image_dir,
                                         bottleneck_dir, category, architecture)
   if not os.path.exists(bottleneck_path):
     create_bottleneck_file(bottleneck_path, image_lists, label_name, index,
-                           image_dir, category, sess, jpeg_data_tensor,
+                           image_dir, category, sess, iterator, jpeg_data_tensor,
                            decoded_image_tensor, resized_input_tensor,
                            bottleneck_tensor)
   with open(bottleneck_path, 'r') as bottleneck_file:
@@ -416,7 +507,7 @@ def get_or_create_bottleneck(sess, image_lists, label_name, index, image_dir,
 
 
 def cache_bottlenecks(sess, image_lists, image_dir, bottleneck_dir,
-                      jpeg_data_tensor, decoded_image_tensor,
+                      iterator, jpeg_data_tensor, decoded_image_tensor,
                       resized_input_tensor, bottleneck_tensor, architecture):
   """Ensures all the training, testing, and validation bottlenecks are cached.
 
@@ -450,7 +541,7 @@ def cache_bottlenecks(sess, image_lists, image_dir, bottleneck_dir,
       for index, unused_base_name in enumerate(category_list):
         get_or_create_bottleneck(
             sess, image_lists, label_name, index, image_dir, category,
-            bottleneck_dir, jpeg_data_tensor, decoded_image_tensor,
+            bottleneck_dir, iterator, jpeg_data_tensor, decoded_image_tensor,
             resized_input_tensor, bottleneck_tensor, architecture)
 
         how_many_bottlenecks += 1
@@ -756,9 +847,11 @@ def add_final_training_ops(class_count, final_tensor_name, aggregated_tensor,
         shape=[None, bottleneck_tensor_size],
         name='BottleneckInputPlaceholder')
 
-    ground_truth_input = tf.placeholder(tf.float32,
-                                        [None, class_count],
-                                        name='GroundTruthInput')
+    # ground_truth_input = tf.placeholder(tf.float32,
+    #                                     [None, class_count],
+    #                                     name='GroundTruthInput')
+    ground_truth_input = tf.placeholder(tf.int32, [None, 1], name='GroundTruthInput')
+    x_ground_truth_input = tf.one_hot(ground_truth_input, class_count)
 
   # Organizing the following ops as `final_training_ops` so they're easier
   # to see in TensorBoard
@@ -783,7 +876,7 @@ def add_final_training_ops(class_count, final_tensor_name, aggregated_tensor,
 
   with tf.name_scope('cross_entropy'):
     cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
-        labels=ground_truth_input, logits=logits)
+        labels=x_ground_truth_input, logits=logits)
     with tf.name_scope('total'):
       cross_entropy_mean = tf.reduce_mean(cross_entropy)
   tf.summary.scalar('cross_entropy', cross_entropy_mean)
@@ -943,25 +1036,32 @@ def add_video_decoding(input_width, input_height, input_depth,
             'data': tf.FixedLenFeature([], tf.string),
             'label': tf.FixedLenFeature([], tf.int64)
         }
+
         parsed_features = tf.parse_single_example(example_proto, features)
-        data = tf.decode_raw(parsed_features["data"], tf.uint8)
-        label = tf.cast(parsed_features["label"], tf.int32)
+        decoded_image = tf.decode_raw(parsed_features["data"], tf.uint8)
+        # decoded_label = tf.cast(parsed_features["label"], tf.int32)
 
-        data = tf.reshape(data, [-1, 299, 299, 3])
-        label = tf.cast(label, tf.int32)
-        label = tf.fill([tf.cast(tf.shape(data)[0], tf.int32)], label)
+        decoded_image_as_float = tf.cast(decoded_image, dtype=tf.float32)
+        reshape_shape = tf.stack([-1, input_height, input_width, input_depth])
+        reshape_shape_as_int = tf.cast(reshape_shape, dtype=tf.int32)
+        reshaped_image = tf.reshape(decoded_image_as_float, reshape_shape)
 
-        return data, label
+        offset_image = tf.subtract(reshaped_image, input_mean)
+        normal_image = tf.multiply(offset_image, 1.0 / input_std)
+        return normal_image
 
-    filename = tf.placeholder(tf.string, shape=[None], name='decodeVIDEOinput')
-    dataset = tf.contrib.data.TFRecordDataset(filename)
+        # label = tf.cast(label, tf.int32)
+        # label = tf.fill([tf.cast(tf.shape(data)[0], tf.int32)], label)
+
+    avi_data_tensor = tf.placeholder(tf.string, shape=[None], name='decodeVIDEOinput')
+    dataset = tf.contrib.data.TFRecordDataset(avi_data_tensor)
     dataset = dataset.map(_parse_function)
     # dataset = dataset.shuffle(10000)
     # dataset = dataset.batch(3)
 
     iterator = dataset.make_initializable_iterator()
-    next_element = iterator.get_next()
-    return iterator, filename, next_element
+    decoded_avi_tensor = iterator.get_next()
+    return iterator, avi_data_tensor, decoded_avi_tensor
 
 def add_jpeg_decoding(input_width, input_height, input_depth, input_mean,
                       input_std):
@@ -990,7 +1090,6 @@ def add_jpeg_decoding(input_width, input_height, input_depth, input_mean,
   mul_image = tf.multiply(offset_image, 1.0 / input_std)
   return jpeg_data, mul_image
 
-
 def main(_):
   # Needed to make sure the logging output is visible.
   # See https://github.com/tensorflow/tensorflow/issues/3047
@@ -1011,7 +1110,7 @@ def main(_):
       create_model_graph(model_info))
 
   # Look at the folder structure, and create lists of all the images.
-  video_lists = create_video_lists(FLAGS.video_dir, FLAGS.split_dir, FLAGS.split_round)
+  video_lists = create_record_lists(FLAGS.record_dir, FLAGS.split_dir, FLAGS.split_round)
   class_count = len(video_lists.keys())
   if class_count == 0:
     tf.logging.error('No valid folders of video found at ' + FLAGS.video_dir)
@@ -1031,7 +1130,7 @@ def main(_):
 
   with tf.Session(graph=graph) as sess:
     # Set up the image decoding sub-graph.
-    jpeg_data_tensor, decoded_image_tensor = add_jpeg_decoding(
+    iterator, jpeg_data_tensor, decoded_image_tensor = add_video_decoding(
         model_info['input_width'], model_info['input_height'],
         model_info['input_depth'], model_info['input_mean'],
         model_info['input_std'])
@@ -1046,13 +1145,15 @@ def main(_):
            model_info['input_height'], model_info['input_depth'],
            model_info['input_mean'], model_info['input_std'])
     else:
-      # # We'll make sure we've calculated the 'bottleneck' image summaries and
-      # # cached them on disk.
-      # cache_bottlenecks(sess, video_lists, FLAGS.video_dir,
-      #                   FLAGS.bottleneck_dir, jpeg_data_tensor,
-      #                   decoded_image_tensor, resized_image_tensor,
-      #                   bottleneck_tensor, FLAGS.architecture)
+      # We'll make sure we've calculated the 'bottleneck' image summaries and
+      # cached them on disk.
+      cache_bottlenecks(sess, video_lists, FLAGS.record_dir,
+                        FLAGS.bottleneck_dir, iterator, jpeg_data_tensor,
+                        decoded_image_tensor, resized_image_tensor,
+                        bottleneck_tensor, FLAGS.architecture)
       pass
+
+    if 1: raise Exception("the first part of application is done! ")
 
     # add a attention layer that we'll be training
     (bottleneck_input, aggregated_tensor) = add_attention_block(len(video_lists.keys()), FLAGS.aggregated_tensor_name, bottleneck_tensor,
@@ -1185,13 +1286,19 @@ if __name__ == '__main__':
   parser.add_argument(
       '--video_dir',
       type=str,
-      default=r'E:\Users\kingdom\HMDB51\hmdb51_org',
+      default=r'F:\Users\kingdom\Documents\HMDB51\hmdb51_org',
       help='Path to folders of labeled videos.'
+  )
+  parser.add_argument(
+      '--record_dir',
+      type=str,
+      default=r'F:\Users\kingdom\Documents\HMDB51\hmdb51_org_records',
+      help='Path to folders of labeled video records.'
   )
   parser.add_argument(
       '--split_dir',
       type=str,
-      default=r'E:\Users\kingdom\HMDB51\testTrainMulti_7030_splits',
+      default=r'F:\Users\kingdom\Documents\HMDB51\testTrainMulti_7030_splits',
       help='Path to folders of split files.'
   )
   parser.add_argument(
@@ -1314,7 +1421,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--bottleneck_dir',
       type=str,
-      default='tmp/bottleneck',
+      default=r'F:\Users\kingdom\Documents\HMDB51\hmdb51_org_bottlenecks',
       help='Path to cache bottleneck layer values as files.'
   )
   parser.add_argument(
