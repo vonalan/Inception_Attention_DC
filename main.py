@@ -1280,7 +1280,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--image_dir',
       type=str,
-      default='images',
+      default=r'F:\Users\kingdom\Documents\HMDB51\hmdb51_org_images',
       help='Path to folders of labeled images.'
   )
   parser.add_argument(
