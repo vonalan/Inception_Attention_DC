@@ -551,7 +551,7 @@ def cache_bottlenecks(sess, image_lists, image_dir, bottleneck_dir,
 
 
 def get_random_cached_bottlenecks(sess, image_lists, how_many, category,
-                                  bottleneck_dir, image_dir, jpeg_data_tensor,
+                                  bottleneck_dir, image_dir, iterator, jpeg_data_tensor,
                                   decoded_image_tensor, resized_input_tensor,
                                   bottleneck_tensor, architecture):
   """Retrieves bottleneck values for cached images.
@@ -594,7 +594,7 @@ def get_random_cached_bottlenecks(sess, image_lists, how_many, category,
                                   image_dir, category)
       bottleneck = get_or_create_bottleneck(
           sess, image_lists, label_name, image_index, image_dir, category,
-          bottleneck_dir, jpeg_data_tensor, decoded_image_tensor,
+          bottleneck_dir, iterator, jpeg_data_tensor, decoded_image_tensor,
           resized_input_tensor, bottleneck_tensor, architecture)
       ground_truth = np.zeros(class_count, dtype=np.float32)
       ground_truth[label_index] = 1.0
@@ -610,7 +610,7 @@ def get_random_cached_bottlenecks(sess, image_lists, how_many, category,
                                     image_dir, category)
         bottleneck = get_or_create_bottleneck(
             sess, image_lists, label_name, image_index, image_dir, category,
-            bottleneck_dir, jpeg_data_tensor, decoded_image_tensor,
+            bottleneck_dir, iterator, jpeg_data_tensor, decoded_image_tensor,
             resized_input_tensor, bottleneck_tensor, architecture)
         ground_truth = np.zeros(class_count, dtype=np.float32)
         ground_truth[label_index] = 1.0
@@ -804,19 +804,30 @@ def add_lstm_layer(class_count, final_tensor_name, bottleneck_tensor,
                    bottleneck_tensor_size):
     pass
 
-def add_attention_block(class_count, aggregated_tensor_name, bottleneck_tensor,
+def add_attention_block(aggregated_tensor_name, bottleneck_tensor,
                    bottleneck_tensor_size):
+    def _single_attention_block(F, outdim):
+        Q = tf.Variable(tf.random_normal([outdim, 1]))
+        E = tf.exp(tf.matmul(F, Q))
+        A = tf.div(E, tf.reduce_sum(E))
+        R = tf.reduce_sum(tf.multiply(F, A), axis=0)
+        return tf.reshape(R, (-1, outdim))
+    def _cascaded_attention_block(r, outdim):
+        W = tf.Variable(tf.random_normal([outdim, outdim]))
+        b = tf.Variable(tf.random_normal([outdim]))
+        Q = tf.nn.tanh((tf.add(tf.matmul(r, W), b)))
+        return Q
+
     with tf.name_scope('input'):
         bottleneck_input = tf.placeholder_with_default(
             bottleneck_tensor,
             shape=[None, bottleneck_tensor_size],
             name='BottleneckInputPlaceholder')
-    with tf.name_scope('attention_block_0'):
-        Q = tf.Variable(tf.random_normal([bottleneck_tensor_size, 1]))
-        E = tf.exp(tf.matmul(bottleneck_tensor, Q))
-        A = tf.div(E, tf.reduce_sum(E))
-        R = tf.reduce_sum(tf.multiply(bottleneck_tensor, A), axis=0)
-        aggregated_tensor = tf.reshape(R, (-1, bottleneck_tensor_size), name=aggregated_tensor_name)
+        # bottleneck_input = tf.reshape(bottleneck_input, (-1, bottleneck_tensor_size))
+
+    with tf.name_scope('attention'):
+        aggregated_tensor = _single_attention_block(bottleneck_tensor, bottleneck_tensor_size)
+        # aggregated_tensor = _cascaded_attention_block(bottleneck_tensor, bottleneck_tensor_size)
     return bottleneck_input, aggregated_tensor
 
 def add_final_training_ops(class_count, final_tensor_name, aggregated_tensor,
@@ -850,8 +861,8 @@ def add_final_training_ops(class_count, final_tensor_name, aggregated_tensor,
     # ground_truth_input = tf.placeholder(tf.float32,
     #                                     [None, class_count],
     #                                     name='GroundTruthInput')
-    ground_truth_input = tf.placeholder(tf.int32, [None, 1], name='GroundTruthInput')
-    x_ground_truth_input = tf.one_hot(ground_truth_input, class_count)
+    ground_truth_input = tf.placeholder(tf.int32, [None, class_count], name='GroundTruthInput')
+    # x_ground_truth_input = tf.one_hot(ground_truth_input, class_count)
 
   # Organizing the following ops as `final_training_ops` so they're easier
   # to see in TensorBoard
@@ -876,7 +887,7 @@ def add_final_training_ops(class_count, final_tensor_name, aggregated_tensor,
 
   with tf.name_scope('cross_entropy'):
     cross_entropy = tf.nn.softmax_cross_entropy_with_logits(
-        labels=x_ground_truth_input, logits=logits)
+        labels=ground_truth_input, logits=logits)
     with tf.name_scope('total'):
       cross_entropy_mean = tf.reduce_mean(cross_entropy)
   tf.summary.scalar('cross_entropy', cross_entropy_mean)
@@ -1147,16 +1158,16 @@ def main(_):
     else:
       # We'll make sure we've calculated the 'bottleneck' image summaries and
       # cached them on disk.
-      cache_bottlenecks(sess, video_lists, FLAGS.record_dir,
-                        FLAGS.bottleneck_dir, iterator, jpeg_data_tensor,
-                        decoded_image_tensor, resized_image_tensor,
-                        bottleneck_tensor, FLAGS.architecture)
+      # cache_bottlenecks(sess, video_lists, FLAGS.record_dir,
+      #                   FLAGS.bottleneck_dir, iterator, jpeg_data_tensor,
+      #                   decoded_image_tensor, resized_image_tensor,
+      #                   bottleneck_tensor, FLAGS.architecture)
       pass
 
-    if 1: raise Exception("the first part of application is done! ")
+    # if 1: raise Exception("the first part of application is done! ")
 
     # add a attention layer that we'll be training
-    (bottleneck_input, aggregated_tensor) = add_attention_block(len(video_lists.keys()), FLAGS.aggregated_tensor_name, bottleneck_tensor,
+    (bottleneck_input, aggregated_tensor) = add_attention_block(FLAGS.aggregated_tensor_name, bottleneck_tensor,
          model_info['bottleneck_tensor_size'])
 
     # Add the new layer that we'll be training.
@@ -1195,9 +1206,14 @@ def main(_):
         (train_bottlenecks,
          train_ground_truth, _) = get_random_cached_bottlenecks(
              sess, video_lists, FLAGS.train_batch_size, 'training',
-             FLAGS.bottleneck_dir, FLAGS.image_dir, jpeg_data_tensor,
+             FLAGS.bottleneck_dir, FLAGS.image_dir, iterator, jpeg_data_tensor,
              decoded_image_tensor, resized_image_tensor, bottleneck_tensor,
              FLAGS.architecture)
+        ''''''
+        train_bottlenecks = train_bottlenecks[0]
+        train_bottlenecks = np.array(train_bottlenecks)
+        train_bottlenecks = np.reshape(train_bottlenecks, (-1, 2048))
+        ''''''
       # Feed the bottlenecks and ground truth into the graph, and run a training
       # step. Capture training summaries for TensorBoard with the `merged` op.
       train_summary, _ = sess.run(
@@ -1220,9 +1236,15 @@ def main(_):
         validation_bottlenecks, validation_ground_truth, _ = (
             get_random_cached_bottlenecks(
                 sess, video_lists, FLAGS.validation_batch_size, 'validation',
-                FLAGS.bottleneck_dir, FLAGS.image_dir, jpeg_data_tensor,
+                FLAGS.bottleneck_dir, FLAGS.image_dir, iterator, jpeg_data_tensor,
                 decoded_image_tensor, resized_image_tensor, bottleneck_tensor,
                 FLAGS.architecture))
+        ''''''
+        validation_bottlenecks = validation_bottlenecks[0]
+        validation_bottlenecks = np.array(validation_bottlenecks)
+        validation_bottlenecks = np.reshape(validation_bottlenecks, (-1, 2048))
+        ''''''
+
         # Run a validation step and capture training summaries for TensorBoard
         # with the `merged` op.
         validation_summary, validation_accuracy = sess.run(
@@ -1250,9 +1272,14 @@ def main(_):
     test_bottlenecks, test_ground_truth, test_filenames = (
         get_random_cached_bottlenecks(
             sess, video_lists, FLAGS.test_batch_size, 'testing',
-            FLAGS.bottleneck_dir, FLAGS.image_dir, jpeg_data_tensor,
+            FLAGS.bottleneck_dir, FLAGS.image_dir, iterator, jpeg_data_tensor,
             decoded_image_tensor, resized_image_tensor, bottleneck_tensor,
             FLAGS.architecture))
+    ''''''
+    test_bottlenecks = test_bottlenecks[0]
+    test_bottlenecks = np.array(test_bottlenecks)
+    test_bottlenecks = np.reshape(test_bottlenecks, (-1, 2048))
+    ''''''
     test_accuracy, predictions = sess.run(
         [evaluation_step, prediction],
         feed_dict={bottleneck_input: test_bottlenecks,
@@ -1343,7 +1370,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--how_many_training_steps',
       type=int,
-      default=4000,
+      default=400000,
       help='How many training steps to run before ending.'
   )
   parser.add_argument(
@@ -1373,13 +1400,13 @@ if __name__ == '__main__':
   parser.add_argument(
       '--train_batch_size',
       type=int,
-      default=100,
+      default=1, # 1 for attention, 100 for lstm
       help='How many images to train on at a time.'
   )
   parser.add_argument(
       '--test_batch_size',
       type=int,
-      default=-1,
+      default=1, # 1 for attention, -1 for others
       help="""\
       How many images to test on. This test set is only used once, to evaluate
       the final accuracy of the model after training completes.
@@ -1390,7 +1417,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--validation_batch_size',
       type=int,
-      default=100,
+      default=1, # 1 for attention, 100 for lstm
       help="""\
       How many images to use in an evaluation batch. This validation set is
       used much more often than the test set, and is an early indicator of how
