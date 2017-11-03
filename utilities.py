@@ -70,7 +70,6 @@ def normal_distribution(x, mu, sigma):
     print('m1: %f, m2: %f'%(m1, m2))
     return m1 * m2
 
-
 if __name__ == "__main__":
     # sess = tf.Session()
     #
