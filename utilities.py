@@ -62,13 +62,26 @@ def parse_tf_example_protocol_buffer_messages():
     next_element = iterator.get_next()
     return iterator, filename, next_element
 
+def normal_distribution(x, mu, sigma):
+    import math
+    pi = 3.1415926
+    m1 = 1.0/(math.sqrt(2.0 * pi) * sigma)
+    m2 = math.exp(-0.5 * (pow((x - mu), 2)/pow(sigma, 2)))
+    print('m1: %f, m2: %f'%(m1, m2))
+    return m1 * m2
+
 
 if __name__ == "__main__":
-    sess = tf.Session()
+    # sess = tf.Session()
+    #
+    # filenames = [data_path2, data_path3, data_path1]
+    # for name in filenames:
+    #     iterator, filename, next_element = parse_tf_example_protocol_buffer_messages()
+    #     sess.run(iterator.initializer, feed_dict={filename:[name]})
+    #     data, label = sess.run(next_element)
+    #     print(data.shape, label.shape, label)
 
-    filenames = [data_path2, data_path3, data_path1]
-    for name in filenames:
-        iterator, filename, next_element = parse_tf_example_protocol_buffer_messages()
-        sess.run(iterator.initializer, feed_dict={filename:[name]})
-        data, label = sess.run(next_element)
-        print(data.shape, label.shape, label)
+    mu = 5.0
+    sigma = 0.5/3.0
+    for i in range(7):
+        print(normal_distribution(mu + (i - 3) * sigma, mu, sigma))
