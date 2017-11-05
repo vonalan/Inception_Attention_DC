@@ -801,7 +801,7 @@ def variable_summaries(var):
     tf.summary.histogram('histogram', var)
 
 def add_rnn_graph(aggregated_tensor_name, bottleneck_tensor,
-                  bottleneck_tensor_size, is_training=False):
+                  bottleneck_tensor_size, is_training=True):
     BASIC = 'BASIC'
     BLOCK = 'BLOCK'
     CUDNN = 'CUDNN'
@@ -810,7 +810,7 @@ def add_rnn_graph(aggregated_tensor_name, bottleneck_tensor,
         rnn_mode = 'BASIC'
         num_layers = 2
         hidden_size = bottleneck_tensor_size
-        keep_prob = 0.5
+        keep_prob = 1.0
         batch_size = 100
         num_steps = 15
         init_scale = 0.1
@@ -876,19 +876,37 @@ def add_rnn_graph(aggregated_tensor_name, bottleneck_tensor,
         # inputs = tf.unstack(inputs, num=num_steps, axis=1)
         # outputs, state = tf.contrib.rnn.static_rnn(cell, inputs,
         #                            initial_state=self._initial_state)
+        '''bugs'''
         outputs = []
         with tf.variable_scope("RNN"):
             for time_step in range(config.num_steps):
                 if time_step > 0: tf.get_variable_scope().reuse_variables()
                 (cell_output, state) = cell(inputs[:, time_step, :], state)
                 outputs.append(cell_output)
-        output = tf.reshape(tf.concat(outputs, 1), [-1, config.hidden_size])
+        # output = tf.reshape(tf.concat(outputs, 1), [-1, config.hidden_size])
+        '''bugs'''
+
+        '''add a bug layer'''
+        output = tf.reshape(tf.concat(outputs, 1), [-1, config.num_steps, config.hidden_size])
+        output = tf.reduce_mean(output, axis=1)
+
+        # output = tf.reshape(tf.concat(outputs, 1), [-1, config.num_steps * config.hidden_size])
+        # with tf.name_scope('after_rnn'):
+        #     softmax_w = tf.get_variable(
+        #         "softmax_w", [config.num_steps * config.hidden_size, config.hidden_size], dtype=data_type())
+        #     softmax_b = tf.get_variable("softmax_b", [config.hidden_size], dtype=data_type())
+        #     output = tf.nn.xw_plus_b(output, softmax_w, softmax_b)
+        '''add a bug layer'''
+
         return output, state
 
     config = Configure()
     with tf.name_scope('input'):
-        bottleneck_input = tf.placeholder_with_default(
-            bottleneck_tensor,
+        # bottleneck_input = tf.placeholder_with_default(
+        #     bottleneck_tensor,
+        #     shape = [None, config.num_steps, bottleneck_tensor_size],
+        #     name = 'BottleneckInputPlaceholder')
+        bottleneck_input = tf.placeholder(dtype=data_type(),
             shape=[None, config.num_steps, bottleneck_tensor_size],
             name='BottleneckInputPlaceholder')
     with tf.name_scope('rnn_block'):
@@ -1144,17 +1162,18 @@ def add_video_decoding(input_width, input_height, input_depth,
             'label': tf.FixedLenFeature([], tf.int64)
         }
 
-        parsed_features = tf.parse_single_example(example_proto, features)
-        decoded_image = tf.decode_raw(parsed_features["data"], tf.uint8)
-        # decoded_label = tf.cast(parsed_features["label"], tf.int32)
+        with tf.device('/cpu:0'):
+            parsed_features = tf.parse_single_example(example_proto, features)
+            decoded_image = tf.decode_raw(parsed_features["data"], tf.uint8)
+            # decoded_label = tf.cast(parsed_features["label"], tf.int32)
 
-        decoded_image_as_float = tf.cast(decoded_image, dtype=tf.float32)
-        reshape_shape = tf.stack([-1, input_height, input_width, input_depth])
-        reshape_shape_as_int = tf.cast(reshape_shape, dtype=tf.int32)
-        reshaped_image = tf.reshape(decoded_image_as_float, reshape_shape)
+            decoded_image_as_float = tf.cast(decoded_image, dtype=tf.float32)
+            reshape_shape = tf.stack([-1, input_height, input_width, input_depth])
+            reshape_shape_as_int = tf.cast(reshape_shape, dtype=tf.int32)
+            reshaped_image = tf.reshape(decoded_image_as_float, reshape_shape_as_int)
 
-        offset_image = tf.subtract(reshaped_image, input_mean)
-        normal_image = tf.multiply(offset_image, 1.0 / input_std)
+            offset_image = tf.subtract(reshaped_image, input_mean)
+            normal_image = tf.multiply(offset_image, 1.0 / input_std)
         return normal_image
 
         # label = tf.cast(label, tf.int32)
@@ -1310,6 +1329,7 @@ def main(_):
              decoded_image_tensor, resized_image_tensor, bottleneck_tensor,
              FLAGS.architecture)
         ''''''
+        print("training...")
         # [batch_size, num_steps * num_features] --> # [batch_size, num_steps, num_features]
         # train_bottlenecks = train_bottlenecks[0]
         train_bottlenecks = np.array(train_bottlenecks)
@@ -1413,13 +1433,13 @@ if __name__ == '__main__':
   parser.add_argument(
       '--image_dir',
       type=str,
-      default=r'F:\Users\kingdom\Documents\HMDB51\hmdb51_org_images',
+      default=r'F:\Users\kingdom\Documents\HMDB51\hmdb51_org_records',
       help='Path to folders of labeled images.'
   )
   parser.add_argument(
       '--video_dir',
       type=str,
-      default=r'F:\Users\kingdom\Documents\HMDB51\hmdb51_org',
+      default=r'F:\Users\kingdom\Documents\HMDB51\hmdb51_org_records',
       help='Path to folders of labeled videos.'
   )
   parser.add_argument(
@@ -1633,7 +1653,10 @@ if __name__ == '__main__':
   '''localhost'''
   hostname = 'icmlc'
   if hostname == 'icmlc':
-    import utils.parse_my_parser as parse_my_parser
+    print("reloading FLAGS, unparsed...")
+    # import utils.parse_my_parser as parse_my_parser
+    import utils
+    parse_my_parser = utils.parse_my_parser
     FLAGS, unparsed = parse_my_parser(argparse)
   ''''''
 
