@@ -800,12 +800,107 @@ def variable_summaries(var):
     tf.summary.scalar('min', tf.reduce_min(var))
     tf.summary.histogram('histogram', var)
 
-def add_lstm_layer(class_count, final_tensor_name, bottleneck_tensor,
-                   bottleneck_tensor_size):
-    pass
+def add_rnn_graph(aggregated_tensor_name, bottleneck_tensor,
+                  bottleneck_tensor_size, is_training=False):
+    BASIC = 'BASIC'
+    BLOCK = 'BLOCK'
+    CUDNN = 'CUDNN'
+
+    class Configure(object):
+        rnn_mode = 'BASIC'
+        num_layers = 2
+        hidden_size = bottleneck_tensor_size
+        keep_prob = 0.5
+        batch_size = 100
+        num_steps = 15
+        init_scale = 0.1
+
+    def data_type():
+        return tf.float16 if FLAGS.use_fp16 else tf.float32
+
+    def _build_rnn_graph_cudnn(self, inputs, config, is_training):
+        """Build the inference graph using CUDNN cell."""
+        inputs = tf.transpose(inputs, [1, 0, 2])    # inputs = [batch_size, num_steps, num_features]
+        self._cell = tf.contrib.cudnn_rnn.CudnnLSTM(
+            num_layers=config.num_layers,
+            num_units=config.hidden_size,
+            input_size=config.hidden_size,
+            dropout=1 - config.keep_prob if is_training else 0)
+        params_size_t = self._cell.params_size()
+        self._rnn_params = tf.get_variable(
+            "lstm_params",
+            initializer=tf.random_uniform(
+                [params_size_t], -config.init_scale, config.init_scale),
+            validate_shape=False)
+        c = tf.zeros([config.num_layers, self.batch_size, config.hidden_size],
+                     tf.float32)
+        h = tf.zeros([config.num_layers, self.batch_size, config.hidden_size],
+                     tf.float32)
+        self._initial_state = (tf.contrib.rnn.LSTMStateTuple(h=h, c=c),)
+        outputs, h, c = self._cell(inputs, h, c, self._rnn_params, is_training)
+        outputs = tf.transpose(outputs, [1, 0, 2])
+        outputs = tf.reshape(outputs, [-1, config.hidden_size])
+        return outputs, (tf.contrib.rnn.LSTMStateTuple(h=h, c=c),)
+
+    def _get_lstm_cell(config, is_training):
+        if config.rnn_mode == BASIC:
+            return tf.contrib.rnn.BasicLSTMCell(
+                config.hidden_size, forget_bias=0.0, state_is_tuple=True,
+                reuse=not is_training)
+        if config.rnn_mode == BLOCK:
+            return tf.contrib.rnn.LSTMBlockCell(
+                config.hidden_size, forget_bias=0.0)
+        raise ValueError("rnn_mode %s not supported" % config.rnn_mode)
+
+    def _build_rnn_graph_lstm(inputs, config, is_training):
+        """Build the inference graph using canonical LSTM cells."""
+        # Slightly better results can be obtained with forget gate biases
+        # initialized to 1 but the hyperparameters of the model would need to be
+        # different than reported in the paper.
+        cell = _get_lstm_cell(config, is_training)
+        if is_training and config.keep_prob < 1:
+            cell = tf.contrib.rnn.DropoutWrapper(
+                cell, output_keep_prob=config.keep_prob)
+
+        cell = tf.contrib.rnn.MultiRNNCell(
+            [cell for _ in range(config.num_layers)], state_is_tuple=True)
+
+        _initial_state = cell.zero_state(config.batch_size, data_type())
+        state = _initial_state
+        # Simplified version of tensorflow_models/tutorials/rnn/rnn.py's rnn().
+        # This builds an unrolled LSTM for tutorial purposes only.
+        # In general, use the rnn() or state_saving_rnn() from rnn.py.
+        #
+        # The alternative version of the code below is:
+        #
+        # inputs = tf.unstack(inputs, num=num_steps, axis=1)
+        # outputs, state = tf.contrib.rnn.static_rnn(cell, inputs,
+        #                            initial_state=self._initial_state)
+        outputs = []
+        with tf.variable_scope("RNN"):
+            for time_step in range(config.num_steps):
+                if time_step > 0: tf.get_variable_scope().reuse_variables()
+                (cell_output, state) = cell(inputs[:, time_step, :], state)
+                outputs.append(cell_output)
+        output = tf.reshape(tf.concat(outputs, 1), [-1, config.hidden_size])
+        return output, state
+
+    config = Configure()
+    with tf.name_scope('input'):
+        bottleneck_input = tf.placeholder_with_default(
+            bottleneck_tensor,
+            shape=[None, config.num_steps, bottleneck_tensor_size],
+            name='BottleneckInputPlaceholder')
+    with tf.name_scope('rnn_block'):
+        if config.rnn_mode == CUDNN:
+            aggregated_tensor, state = _build_rnn_graph_cudnn(bottleneck_input, config, is_training)
+        else:
+            aggregated_tensor, state = _build_rnn_graph_lstm(bottleneck_input, config, is_training)
+    return bottleneck_input, aggregated_tensor
+
 
 def add_attention_block(aggregated_tensor_name, bottleneck_tensor,
-                   bottleneck_tensor_size):
+                   bottleneck_tensor_size, is_training=False):
     def _single_attention_block(F, outdim):
         Q = tf.Variable(tf.random_normal([outdim, 1]))
         E = tf.exp(tf.matmul(F, Q))
@@ -826,9 +921,10 @@ def add_attention_block(aggregated_tensor_name, bottleneck_tensor,
         # bottleneck_input = tf.reshape(bottleneck_input, (-1, bottleneck_tensor_size))
 
     with tf.name_scope('attention'):
-        aggregated_tensor = _single_attention_block(bottleneck_tensor, bottleneck_tensor_size)
+        aggregated_tensor = _single_attention_block(bottleneck_input, bottleneck_tensor_size)
         # aggregated_tensor = _cascaded_attention_block(bottleneck_tensor, bottleneck_tensor_size)
     return bottleneck_input, aggregated_tensor
+
 
 def add_final_training_ops(class_count, final_tensor_name, aggregated_tensor,
                            bottleneck_tensor_size):
@@ -1166,9 +1262,13 @@ def main(_):
 
     # if 1: raise Exception("the first part of application is done! ")
 
-    # add a attention layer that we'll be training
-    (bottleneck_input, aggregated_tensor) = add_attention_block(FLAGS.aggregated_tensor_name, bottleneck_tensor,
-         model_info['bottleneck_tensor_size'])
+    # add a rnn block that we'll be training
+    (bottleneck_input, aggregated_tensor) = add_rnn_graph(FLAGS.aggregated_tensor_name, bottleneck_tensor,
+                                                                model_info['bottleneck_tensor_size'])
+
+    # # add a attention layer that we'll be training
+    # (bottleneck_input, aggregated_tensor) = add_attention_block(FLAGS.aggregated_tensor_name, bottleneck_tensor,
+    #      model_info['bottleneck_tensor_size'])
 
     # Add the new layer that we'll be training.
     (train_step, cross_entropy, aggregated_input, ground_truth_input,
@@ -1210,9 +1310,11 @@ def main(_):
              decoded_image_tensor, resized_image_tensor, bottleneck_tensor,
              FLAGS.architecture)
         ''''''
-        train_bottlenecks = train_bottlenecks[0]
+        # [batch_size, num_steps * num_features] --> # [batch_size, num_steps, num_features]
+        # train_bottlenecks = train_bottlenecks[0]
         train_bottlenecks = np.array(train_bottlenecks)
-        train_bottlenecks = np.reshape(train_bottlenecks, (-1, 2048))
+        train_bottlenecks = np.reshape(train_bottlenecks, (-1, 15, 2048))
+        # train_bottlenecks = tf.convert_to_tensor(train_bottlenecks)
         ''''''
       # Feed the bottlenecks and ground truth into the graph, and run a training
       # step. Capture training summaries for TensorBoard with the `merged` op.
@@ -1240,9 +1342,11 @@ def main(_):
                 decoded_image_tensor, resized_image_tensor, bottleneck_tensor,
                 FLAGS.architecture))
         ''''''
-        validation_bottlenecks = validation_bottlenecks[0]
+        # [batch_size, num_steps * num_features] --> # [batch_size, num_steps, num_features]
+        # validation_bottlenecks = validation_bottlenecks[0]
         validation_bottlenecks = np.array(validation_bottlenecks)
-        validation_bottlenecks = np.reshape(validation_bottlenecks, (-1, 2048))
+        validation_bottlenecks = np.reshape(validation_bottlenecks, (-1, 15, 2048))
+        # validation_bottlenecks = tf.convert_to_tensor(validation_bottlenecks)
         ''''''
 
         # Run a validation step and capture training summaries for TensorBoard
@@ -1276,9 +1380,11 @@ def main(_):
             decoded_image_tensor, resized_image_tensor, bottleneck_tensor,
             FLAGS.architecture))
     ''''''
-    test_bottlenecks = test_bottlenecks[0]
+    # [batch_size, num_steps * num_features] --> # [batch_size, num_steps, num_features]
+    # test_bottlenecks = test_bottlenecks[0]
     test_bottlenecks = np.array(test_bottlenecks)
-    test_bottlenecks = np.reshape(test_bottlenecks, (-1, 2048))
+    test_bottlenecks = np.reshape(test_bottlenecks, (-1, 15, 2048))
+    # test_bottlenecks = tf.convert_to_tensor(test_bottlenecks)
     ''''''
     test_accuracy, predictions = sess.run(
         [evaluation_step, prediction],
@@ -1370,7 +1476,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--how_many_training_steps',
       type=int,
-      default=400000,
+      default=4000,
       help='How many training steps to run before ending.'
   )
   parser.add_argument(
@@ -1400,13 +1506,13 @@ if __name__ == '__main__':
   parser.add_argument(
       '--train_batch_size',
       type=int,
-      default=1, # 1 for attention, 100 for lstm
+      default=100, # 1 for attention, 100 for lstm
       help='How many images to train on at a time.'
   )
   parser.add_argument(
       '--test_batch_size',
       type=int,
-      default=1, # 1 for attention, -1 for others
+      default=-1, # 1 for attention, -1 for others
       help="""\
       How many images to test on. This test set is only used once, to evaluate
       the final accuracy of the model after training completes.
@@ -1417,7 +1523,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--validation_batch_size',
       type=int,
-      default=1, # 1 for attention, 100 for lstm
+      default=100, # 1 for attention, 100 for lstm
       help="""\
       How many images to use in an evaluation batch. This validation set is
       used much more often than the test set, and is an early indicator of how
@@ -1503,6 +1609,12 @@ if __name__ == '__main__':
       """
   )
   parser.add_argument(
+      '--use_fp16',
+      type=bool,
+      default=False,
+      help='Train using 16-bit floats instead of 32bit floats'
+  )
+  parser.add_argument(
       '--architecture',
       type=str,
       default='inception_v3',
@@ -1517,4 +1629,12 @@ if __name__ == '__main__':
       for more information on Mobilenet.\
       """)
   FLAGS, unparsed = parser.parse_known_args()
+
+  '''localhost'''
+  hostname = 'icmlc'
+  if hostname == 'icmlc':
+    import utils.parse_my_parser as parse_my_parser
+    FLAGS, unparsed = parse_my_parser(argparse)
+  ''''''
+
   tf.app.run(main=main, argv=[sys.argv[0]] + unparsed)
