@@ -811,7 +811,7 @@ def add_rnn_graph(aggregated_tensor_name, bottleneck_tensor,
         num_layers = 2
         hidden_size = bottleneck_tensor_size
         keep_prob = 1.0
-        batch_size = 100
+        batch_size = 5
         num_steps = 15
         init_scale = 0.1
 
@@ -881,6 +881,7 @@ def add_rnn_graph(aggregated_tensor_name, bottleneck_tensor,
         with tf.variable_scope("RNN"):
             for time_step in range(config.num_steps):
                 if time_step > 0: tf.get_variable_scope().reuse_variables()
+                temp_inputs = inputs[:, time_step,:]
                 (cell_output, state) = cell(inputs[:, time_step, :], state)
                 outputs.append(cell_output)
         # output = tf.reshape(tf.concat(outputs, 1), [-1, config.hidden_size])
@@ -901,6 +902,7 @@ def add_rnn_graph(aggregated_tensor_name, bottleneck_tensor,
         return output, state
 
     config = Configure()
+
     with tf.name_scope('input'):
         # bottleneck_input = tf.placeholder_with_default(
         #     bottleneck_tensor,
@@ -1254,6 +1256,7 @@ def main(_):
       FLAGS.random_brightness)
   print('do_distort_images: %d'%(do_distort_images))
 
+  # config = tf.ConfigProto(device_count={"CPU": 24, "GPU": 0})
   with tf.Session(graph=graph) as sess:
     # Set up the image decoding sub-graph.
     iterator, jpeg_data_tensor, decoded_image_tensor = add_video_decoding(
@@ -1329,7 +1332,7 @@ def main(_):
              decoded_image_tensor, resized_image_tensor, bottleneck_tensor,
              FLAGS.architecture)
         ''''''
-        print("training...")
+        # print("training...")
         # [batch_size, num_steps * num_features] --> # [batch_size, num_steps, num_features]
         # train_bottlenecks = train_bottlenecks[0]
         train_bottlenecks = np.array(train_bottlenecks)
@@ -1439,7 +1442,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--video_dir',
       type=str,
-      default=r'F:\Users\kingdom\Documents\HMDB51\hmdb51_org_records',
+      default=r'F:\Users\kingdom\Documents\HMDB51\hmdb51_org',
       help='Path to folders of labeled videos.'
   )
   parser.add_argument(
@@ -1496,7 +1499,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--how_many_training_steps',
       type=int,
-      default=4000,
+      default=40000,
       help='How many training steps to run before ending.'
   )
   parser.add_argument(
@@ -1526,13 +1529,13 @@ if __name__ == '__main__':
   parser.add_argument(
       '--train_batch_size',
       type=int,
-      default=100, # 1 for attention, 100 for lstm
+      default=5, # 1 for attention, 100 for lstm
       help='How many images to train on at a time.'
   )
   parser.add_argument(
       '--test_batch_size',
       type=int,
-      default=-1, # 1 for attention, -1 for others
+      default=5, # 1 for attention, -1 for others
       help="""\
       How many images to test on. This test set is only used once, to evaluate
       the final accuracy of the model after training completes.
@@ -1543,7 +1546,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--validation_batch_size',
       type=int,
-      default=100, # 1 for attention, 100 for lstm
+      default=5, # 1 for attention, 100 for lstm
       help="""\
       How many images to use in an evaluation batch. This validation set is
       used much more often than the test set, and is an early indicator of how
@@ -1651,7 +1654,8 @@ if __name__ == '__main__':
   FLAGS, unparsed = parser.parse_known_args()
 
   '''localhost'''
-  hostname = 'icmlc'
+  # hostname = 'icmlc'
+  hostname = ''
   if hostname == 'icmlc':
     print("reloading FLAGS, unparsed...")
     # import utils.parse_my_parser as parse_my_parser
