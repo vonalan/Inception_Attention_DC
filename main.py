@@ -811,7 +811,7 @@ def add_rnn_graph(aggregated_tensor_name, bottleneck_tensor,
         num_layers = 2
         hidden_size = bottleneck_tensor_size
         keep_prob = 1.0
-        batch_size = 5
+        batch_size = 10
         num_steps = 15
         init_scale = 0.1
 
@@ -888,8 +888,8 @@ def add_rnn_graph(aggregated_tensor_name, bottleneck_tensor,
         '''bugs'''
 
         '''add a bug layer'''
-        output = tf.reshape(tf.concat(outputs, 1), [-1, config.num_steps, config.hidden_size])
-        output = tf.reduce_mean(output, axis=1)
+        # output = tf.reshape(tf.concat(outputs, 1), [-1, config.num_steps, config.hidden_size])
+        # output = tf.reduce_mean(output, axis=1)
 
         # output = tf.reshape(tf.concat(outputs, 1), [-1, config.num_steps * config.hidden_size])
         # with tf.name_scope('after_rnn'):
@@ -897,6 +897,8 @@ def add_rnn_graph(aggregated_tensor_name, bottleneck_tensor,
         #         "softmax_w", [config.num_steps * config.hidden_size, config.hidden_size], dtype=data_type())
         #     softmax_b = tf.get_variable("softmax_b", [config.hidden_size], dtype=data_type())
         #     output = tf.nn.xw_plus_b(output, softmax_w, softmax_b)
+
+        output = outputs[-1]
         '''add a bug layer'''
 
         return output, state
@@ -1256,8 +1258,8 @@ def main(_):
       FLAGS.random_brightness)
   print('do_distort_images: %d'%(do_distort_images))
 
-  # config = tf.ConfigProto(device_count={"CPU": 24, "GPU": 0})
-  with tf.Session(graph=graph) as sess:
+  config = tf.ConfigProto(device_count={"CPU": 24, "GPU": 0})
+  with tf.Session(graph=graph, config=config) as sess:
     # Set up the image decoding sub-graph.
     iterator, jpeg_data_tensor, decoded_image_tensor = add_video_decoding(
         model_info['input_width'], model_info['input_height'],
@@ -1276,10 +1278,10 @@ def main(_):
     else:
       # We'll make sure we've calculated the 'bottleneck' image summaries and
       # cached them on disk.
-      # cache_bottlenecks(sess, video_lists, FLAGS.record_dir,
-      #                   FLAGS.bottleneck_dir, iterator, jpeg_data_tensor,
-      #                   decoded_image_tensor, resized_image_tensor,
-      #                   bottleneck_tensor, FLAGS.architecture)
+      cache_bottlenecks(sess, video_lists, FLAGS.record_dir,
+                        FLAGS.bottleneck_dir, iterator, jpeg_data_tensor,
+                        decoded_image_tensor, resized_image_tensor,
+                        bottleneck_tensor, FLAGS.architecture)
       pass
 
     # if 1: raise Exception("the first part of application is done! ")
@@ -1529,13 +1531,13 @@ if __name__ == '__main__':
   parser.add_argument(
       '--train_batch_size',
       type=int,
-      default=5, # 1 for attention, 100 for lstm
+      default=10, # 1 for attention, 100 for lstm
       help='How many images to train on at a time.'
   )
   parser.add_argument(
       '--test_batch_size',
       type=int,
-      default=5, # 1 for attention, -1 for others
+      default=10, # 1 for attention, -1 for others
       help="""\
       How many images to test on. This test set is only used once, to evaluate
       the final accuracy of the model after training completes.
@@ -1546,7 +1548,7 @@ if __name__ == '__main__':
   parser.add_argument(
       '--validation_batch_size',
       type=int,
-      default=5, # 1 for attention, 100 for lstm
+      default=10, # 1 for attention, 100 for lstm
       help="""\
       How many images to use in an evaluation batch. This validation set is
       used much more often than the test set, and is an early indicator of how
@@ -1654,8 +1656,8 @@ if __name__ == '__main__':
   FLAGS, unparsed = parser.parse_known_args()
 
   '''localhost'''
-  # hostname = 'icmlc'
-  hostname = ''
+  hostname = 'icmlc'
+  # hostname = ''
   if hostname == 'icmlc':
     print("reloading FLAGS, unparsed...")
     # import utils.parse_my_parser as parse_my_parser

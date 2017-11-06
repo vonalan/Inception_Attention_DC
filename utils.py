@@ -168,13 +168,13 @@ def parse_my_parser(argparse):
     parser.add_argument(
         '--train_batch_size',
         type=int,
-        default=100,  # 1 for attention, 100 for lstm
+        default=10,  # 1 for attention, 100 for lstm
         help='How many images to train on at a time.'
     )
     parser.add_argument(
         '--test_batch_size',
         type=int,
-        default=100,  # 1 for attention, -1 for others
+        default=10,  # 1 for attention, -1 for others
         help="""\
           How many images to test on. This test set is only used once, to evaluate
           the final accuracy of the model after training completes.
@@ -185,7 +185,7 @@ def parse_my_parser(argparse):
     parser.add_argument(
         '--validation_batch_size',
         type=int,
-        default=100,  # 1 for attention, 100 for lstm
+        default=10,  # 1 for attention, 100 for lstm
         help="""\
           How many images to use in an evaluation batch. This validation set is
           used much more often than the test set, and is an early indicator of how
